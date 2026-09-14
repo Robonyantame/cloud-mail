@@ -12,6 +12,7 @@ import userService from '../service/user-service';
 import telegramService from '../service/telegram-service';
 import aiService from '../service/ai-service';
 import webhookService from '../service/webhook-service';
+import subdomainPolicy from '../service/subdomain-policy';
 
 export async function email(message, env, ctx) {
 
@@ -62,9 +63,14 @@ export async function email(message, env, ctx) {
 			return;
 		}
 
-		let account = await accountService.selectByEmailIncludeDel({ env: env }, message.to);
+		const strictRecipient = await subdomainPolicy.recipient({ env }, message.to, email.from.address);
+		if (strictRecipient?.error) {
+			message.setReject(strictRecipient.error);
+			return;
+		}
+		let account = strictRecipient?.account ?? await accountService.selectByEmailIncludeDel({ env: env }, message.to);
 
-		if (!account) {
+		if (!account && !strictRecipient) {
 			const baseEmail = emailUtils.getBaseEmail(message.to);
 			if (baseEmail && baseEmail !== message.to) {
 				account = await accountService.selectByEmailIncludeDel({ env: env }, baseEmail);
@@ -82,7 +88,7 @@ export async function email(message, env, ctx) {
 			 userRow = await userService.selectByIdIncludeDel({ env: env }, account.userId);
 		}
 
-		if (account && userRow.email !== env.admin) {
+		if (account && !strictRecipient && userRow.email !== env.admin) {
 
 			let { banEmail, availDomain } = await roleService.selectByUserId({ env: env }, account.userId);
 
@@ -202,7 +208,7 @@ export async function email(message, env, ctx) {
 	}
 }
 
-function checkBlock(blackSubjectStr, blackContentStr, blackFromStr, email) {
+export function checkBlock(blackSubjectStr, blackContentStr, blackFromStr, email) {
 
 	const blackFromList = blackFromStr ? blackFromStr.split(',') : []
 	const blackContentList = blackContentStr ? blackContentStr.split(',') : []

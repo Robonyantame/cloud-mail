@@ -1,4 +1,5 @@
 import BizError from '../error/biz-error';
+import subdomainPolicy from './subdomain-policy';
 import orm from '../entity/orm';
 import { v4 as uuidv4 } from 'uuid';
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
@@ -103,6 +104,7 @@ const publicService = {
 			if (!verifyUtils.isEmail(emailRow.email)) {
 				throw new BizError(t('notEmail'));
 			}
+			await subdomainPolicy.assertOrdinary(c, emailRow.email);
 
 			if (!c.env.domain.includes(emailUtils.getDomain(emailRow.email))) {
 				throw new BizError(t('notEmailDomain'));

@@ -12,6 +12,7 @@ import turnstileService from './turnstile-service';
 import roleService from './role-service';
 import { t } from '../i18n/i18n';
 import verifyRecordService from './verify-record-service';
+import subdomainPolicy from './subdomain-policy';
 
 const accountService = {
 
@@ -34,6 +35,7 @@ const accountService = {
 		if (!verifyUtils.isEmail(email)) {
 			throw new BizError(t('notEmail'));
 		}
+		await subdomainPolicy.assertOrdinary(c, email);
 
 		if (!c.env.domain.includes(emailUtils.getDomain(email))) {
 			throw new BizError(t('notExistDomain'));
@@ -96,7 +98,14 @@ const accountService = {
 		}
 
 
-		accountRow = await orm(c).insert(account).values({ email: email, userId: userId, name: emailUtils.getName(email) }).returning().get();
+		// Recheck the current role quota in the INSERT, including concurrent API batches.
+		const inserted = await c.env.db.prepare(`INSERT INTO account(email, user_id, name)
+			SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM user u LEFT JOIN role r ON r.role_id = u.type
+				WHERE u.user_id = ? AND (u.email = ? COLLATE NOCASE OR COALESCE(r.account_count, 0) <= 0 OR
+				(SELECT count(*) FROM account WHERE user_id = u.user_id AND is_del = 0) < r.account_count))
+			RETURNING account_id`).bind(email, userId, emailUtils.getName(email), userId, c.env.admin).first();
+		if (!inserted) throw new BizError(t('accountLimit'), 403);
+		accountRow = await this.selectById(c, inserted.account_id);
 
 		if (addEmailVerify === settingConst.addEmailVerify.COUNT && !addVerifyOpen) {
 			const row = await verifyRecordService.increaseAddCount(c);

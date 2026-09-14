@@ -7,6 +7,11 @@ import { cors } from 'hono/cors';
 app.use('*', cors());
 
 app.onError((err, c) => {
+	if (c.req.path.startsWith('/public/subdomainMailbox/')) {
+		const code = err instanceof SyntaxError ? 400 : (err.name === 'BizError' ? err.code : 500);
+		if (code === 500) console.error(err);
+		return c.json(result.fail(err instanceof SyntaxError ? 'INVALID_JSON' : err.message, code), code);
+	}
 	if (err.name === 'BizError') {
 		console.log(err.message);
 	} else {

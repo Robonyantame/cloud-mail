@@ -1,0 +1,4 @@
+# Local bundle checks only. No build hooks, assets or remote resource identifiers.
+name = "cloud-mail-local-check"
+main = "src/index.js"
+compatibility_date = "2025-06-04"

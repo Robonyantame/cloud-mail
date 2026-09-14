@@ -1,4 +1,5 @@
 import BizError from '../error/biz-error';
+import subdomainPolicy from './subdomain-policy';
 import accountService from './account-service';
 import orm from '../entity/orm';
 import user from '../entity/user';
@@ -325,6 +326,7 @@ const userService = {
 
 		let { email, type, password } = params;
 
+		await subdomainPolicy.assertOrdinary(c, email);
 		if (!c.env.domain.includes(emailUtils.getDomain(email))) {
 			throw new BizError(t('notEmailDomain'));
 		}

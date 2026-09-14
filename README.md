@@ -38,6 +38,7 @@
 
 - [在线演示](https://skymail.ink)<br>
 - [部署文档](https://doc.skymail.ink)<br>
+- [随机及自定义子域名邮箱：API、迁移与真实收信验证](doc/subdomain-mail-operations.md)<br>
 
 | ![](/doc/demo/demo1.png) | ![](/doc/demo/demo2.png) |
 |-----------------------|-----------------------|

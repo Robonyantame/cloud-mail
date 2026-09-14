@@ -5,6 +5,7 @@ export const account = sqliteTable('account', {
 	email: text('email').notNull(),
 	name: text('name').notNull().default(''),
 	status: integer('status').default(0).notNull(),
+	mailboxKind: integer('mailbox_kind').default(0).notNull(),
 	latestEmailTime: text('latest_email_time'),
 	createTime: text('create_time').default(sql`CURRENT_TIMESTAMP`),
 	userId: integer('user_id').notNull(),

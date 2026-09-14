@@ -1,4 +1,5 @@
 import BizError from '../error/biz-error';
+import subdomainPolicy from './subdomain-policy';
 import userService from './user-service';
 import emailUtils from '../utils/email-utils';
 import { isDel, settingConst, userConst } from '../const/entity-const';
@@ -61,6 +62,7 @@ const loginService = {
 			throw new BizError(t('pwdMinLength'));
 		}
 
+		await subdomainPolicy.assertOrdinary(c, email);
 		if (!c.env.domain.includes(emailUtils.getDomain(email))) {
 			throw new BizError(t('notEmailDomain'));
 		}

@@ -2,9 +2,13 @@
 	"name": "mail-worker",
 	"version": "0.0.0",
 	"private": true,
+	"type": "module",
 	"scripts": {
 		"dev": "wrangler dev --config wrangler-dev.toml",
-		"test": "wrangler deploy --config wrangler-test.toml",
+		"test": "vitest run",
+		"check": "wrangler deploy --dry-run --config wrangler-check.toml --outdir .wrangler/check",
+		"subdomain:name": "node scripts/subdomain-name.mjs",
+		"subdomain:migration": "node scripts/subdomain-migration.mjs",
 		"deploy": "wrangler deploy",
 		"start": "wrangler dev"
 	},

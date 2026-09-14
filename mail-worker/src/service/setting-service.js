@@ -10,6 +10,7 @@ import {t} from '../i18n/i18n'
 import verifyRecordService from './verify-record-service';
 import userContext from '../security/user-context';
 import domainUtils from '../utils/domain-uitls';
+import { subdomainConfig } from '../utils/subdomain-utils';
 
 const settingService = {
 
@@ -46,7 +47,11 @@ const settingService = {
 			throw new BizError(t('noDomainVariable'));
 		}
 
-		domainList = domainList.map(item => '@' + item);
+		const { domains: subdomains } = subdomainConfig(c.env);
+		// Dedicated receive domains must not leak into public registration choices.
+		const { results: managedDomains } = await c.env.db.prepare('SELECT domain FROM managed_subdomain').all();
+		const managed = new Set([...subdomains, ...managedDomains.map(row => row.domain)]);
+		domainList = domainList.filter(domain => !managed.has(domain.toLowerCase())).map(item => '@' + item);
 		setting.domainList = domainList;
 
 		let projectLink = c.env.project_link;

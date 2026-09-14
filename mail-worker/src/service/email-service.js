@@ -23,6 +23,8 @@ import domainUtils from '../utils/domain-uitls';
 import account from "../entity/account";
 import { att } from '../entity/att';
 import telegramService from './telegram-service';
+import subdomainPolicy from './subdomain-policy';
+import { checkBlock } from '../email/email';
 
 const emailService = {
 
@@ -261,6 +263,11 @@ const emailService = {
 			attachments = [] //附件
 		} = params;
 
+		const accountRow = await accountService.selectById(c, accountId);
+		if (!accountRow) throw new BizError(t('senderAccountNotExist'));
+		if (accountRow.userId !== userId) throw new BizError(t('sendEmailNotCurUser'));
+		await subdomainPolicy.assertSender(c, accountRow.email);
+
 		const { resendTokens, r2Domain, send, domainList } = await settingService.query(c);
 
 		let { imageDataList, html } = await attService.toImageUrlHtml(c, content);
@@ -274,9 +281,10 @@ const emailService = {
 		const roleRow = await roleService.selectById(c, userRow.type);
 
 		//判断接收方是不是全部为站内邮箱
-		const allInternal = receiveEmail.every(email => {
+		const managedRecipients = await Promise.all(receiveEmail.map(address => subdomainPolicy.isManaged(c, address)));
+		const allInternal = receiveEmail.every((email, index) => {
 			const domain = '@' + emailUtils.getDomain(email);
-			return domainList.includes(domain);
+			return domainList.includes(domain) || managedRecipients[index];
 		});
 
 		if (c.env.admin !== userRow.email) {
@@ -306,16 +314,6 @@ const emailService = {
 				if (roleRow.sendType === 'count') throw new BizError(t('totalSendLack'), 403);
 			}
 
-		}
-
-		const accountRow = await accountService.selectById(c, accountId);
-
-		if (!accountRow) {
-			throw new BizError(t('senderAccountNotExist'));
-		}
-
-		if (accountRow.userId !== userId) {
-			throw new BizError(t('sendEmailNotCurUser'));
 		}
 
 		if (c.env.admin !== userRow.email) {
@@ -473,6 +471,7 @@ const emailService = {
 	},
 
 	async sendByCloudflareEmail(c, params) {
+		await subdomainPolicy.assertSender(c, params.accountEmail);
 		const sendForm = {
 			from: { email: params.accountEmail, name: params.name },
 			to: [...params.receiveEmail],
@@ -640,7 +639,7 @@ const emailService = {
 	//处理站内邮件发送
 	async HandleOnSiteEmail(c, receiveEmail, sendEmailData, attList) {
 
-		const { noRecipient  } = await settingService.query(c);
+		const { noRecipient, receive, blackSubject, blackContent, blackFrom } = await settingService.query(c);
 
 		//查询所有收件人账号信息
 		let accountList = await orm(c).select().from(account).where(inArray(account.email, receiveEmail)).all();
@@ -682,6 +681,23 @@ const emailService = {
 			emailValues.toEmail = email;
 			emailValues.toName = emailUtils.getName(email);
 			emailValues.emailId = null;
+
+			const strictRecipient = await subdomainPolicy.recipient(c, email, sendEmailData.sendEmail);
+			if (strictRecipient) {
+				const blocked = receive === settingConst.receive.CLOSE || checkBlock(blackSubject, blackContent, blackFrom, {
+					subject: sendEmailData.subject, html: sendEmailData.content, text: sendEmailData.text,
+					from: { address: sendEmailData.sendEmail }
+				});
+				if (strictRecipient.error || blocked) {
+					emailValues.status = emailConst.status.BOUNCED;
+					emailValues.message = strictRecipient.error || 'Message rejected';
+				} else {
+					emailValues.accountId = strictRecipient.account.accountId;
+					emailValues.userId = strictRecipient.account.userId;
+				}
+				emailDataList.push(emailValues);
+				continue;
+			}
 
 			let accountRow = allAccounts.find(accountRow => accountRow.email === email);
 
