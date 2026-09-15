@@ -1,5 +1,13 @@
 import http from '@/axios/index.js'
 
+export function userSubdomainDomains() {
+    return http.get('/user/subdomainMailbox/domains')
+}
+
+export function userSubdomainBatchCreate(params) {
+    return http.post('/user/subdomainMailbox/batchCreate', params, {noMsg: true})
+}
+
 
 export function userList(params) {
     return http.get('/user/list', {params: {...params}})

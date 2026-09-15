@@ -12,6 +12,7 @@ import { email as inbound } from '../src/email/email';
 import worker from '../src';
 import KvConst from '../src/const/kv-const';
 import { subdomainName, subdomainConfig } from '../src/utils/subdomain-utils';
+import jwtUtils from '../src/utils/jwt-utils';
 
 let c;
 const domain = 'shop.example.com';
@@ -34,6 +35,17 @@ async function api(path, body, token = 'test-token', method = body ? 'POST' : 'G
 	if (token !== null) headers.Authorization = token;
 	return worker.fetch(new Request(`https://mail.example.com/api/public/subdomainMailbox/${path}`, {
 		method, headers, ...(body ? { body: JSON.stringify(body) } : {}),
+	}), c.env, {});
+}
+
+async function browserApi(userId, path, body, tokenOverride) {
+	const tokenId = 'browser-test-session';
+	const user = await userService.selectById(c, userId);
+	await c.env.kv.put(KvConst.AUTH_INFO + userId, JSON.stringify({user, tokens: [tokenId], refreshTime: new Date().toISOString()}));
+	const token = tokenOverride ?? await jwtUtils.generateToken(c, {userId, token: tokenId}, 3600);
+	return worker.fetch(new Request(`https://mail.example.com/api/user/subdomainMailbox/${path}`, {
+		method: body ? 'POST' : 'GET', headers: {Authorization: token, 'Content-Type': 'application/json'},
+		...(body ? {body: JSON.stringify(body)} : {}),
 	}), c.env, {});
 }
 
@@ -324,6 +336,30 @@ describe('strict delivery, lifecycle and existing UI', () => {
 });
 
 describe('API and provisioning', () => {
+	it('offers configured subdomains and creation to the signed-in administrator only', async () => {
+		expect((await (await browserApi(1, 'domains')).json()).data).toEqual([domain]);
+		expect((await (await browserApi(2, 'domains')).json()).code).toBe(403);
+		expect((await (await browserApi(1, 'domains', undefined, 'test-token')).json()).code).toBe(401);
+		const input = {...custom(['root']), userId: 1};
+		expect((await (await browserApi(2, 'batchCreate', input)).json()).code).toBe(403);
+		expect(await first('SELECT count(*) n FROM mailbox_reservation')).toEqual({n: 0});
+		const response = await (await browserApi(1, 'batchCreate', input)).json();
+		expect(response.data.created).toBe(1);
+		expect(response.data.items[0].email).toBe(`root@${domain}`);
+		expect(await first('SELECT count(*) n FROM user')).toEqual({n: 2});
+		expect(await deliver(`root@${domain}`)).not.toHaveBeenCalled();
+		expect((await (await browserApi(1, 'batchCreate', input)).json()).data).toEqual(response.data);
+		expect((await (await api('batchCreate', input)).json()).data).toEqual(response.data);
+	});
+	it('keeps target-user quota, prefix validation and domain permission checks in browser creation', async () => {
+		const response = await (await browserApi(1, 'batchCreate', {...custom(['first', 'bad space', 'second', 'third']), userId: 2})).json();
+		expect(response.data.created).toBe(2);
+		expect(response.data.items.map(item => item.error || item.status)).toEqual(['created', 'INVALID_PREFIX', 'created', 'QUOTA_EXCEEDED']);
+		await run("UPDATE role SET avail_domain = 'example.com' WHERE role_id = 1");
+		expect((await (await browserApi(1, 'batchCreate', request({userId: 2}))).json()).message).toBe('DOMAIN_PERMISSION_DENIED');
+		await run('UPDATE user SET status = 1 WHERE user_id = 1');
+		expect((await (await browserApi(1, 'domains')).json()).code).toBe(403);
+	});
 	it('expands every label across all mailbox domains and receives at the requested full addresses', async () => {
 		c.env.domain = ['mxr.cc.cd', 'roop.cc.cd', 'tame.cc.cd'];
 		c.env.subdomain_domains = ['shop', 'tools'];

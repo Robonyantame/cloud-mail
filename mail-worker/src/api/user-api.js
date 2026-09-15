@@ -3,6 +3,27 @@ import userService from '../service/user-service';
 import result from '../model/result';
 import userContext from '../security/user-context';
 import accountService from '../service/account-service';
+import subdomainMailboxService from '../service/subdomain-mailbox-service';
+import { subdomainConfig } from '../utils/subdomain-utils';
+import BizError from '../error/biz-error';
+import { bodyLimit } from 'hono/body-limit';
+
+// Browser access uses the signed-in administrator, never a public token embedded in UI.
+app.use('/user/subdomainMailbox/*', async (c, next) => {
+	if (userContext.getUserId(c) !== await subdomainMailboxService.admin(c)) {
+		throw new BizError('ADMIN_REQUIRED', 403);
+	}
+	return next();
+});
+app.use('/user/subdomainMailbox/*', bodyLimit({ maxSize: 65536,
+	onError: c => c.json(result.fail('REQUEST_TOO_LARGE', 413)) }));
+app.get('/user/subdomainMailbox/domains', c => c.json(result.ok(subdomainConfig(c.env).domains)));
+app.post('/user/subdomainMailbox/batchCreate', async c => {
+	const data = await subdomainMailboxService.batchCreate(c, await c.req.json());
+	// Keep the browser's existing response envelope; processing is explicit in data.
+	if (data.status === 'processing') c.header('Retry-After', String(data.retryAfter));
+	return c.json(result.ok(data));
+});
 
 app.delete('/user/delete', async (c) => {
 	await userService.physicsDelete(c, c.req.query());

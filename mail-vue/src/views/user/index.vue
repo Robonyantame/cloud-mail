@@ -200,6 +200,9 @@
       </div>
     </el-dialog>
     <el-dialog class="account-dialog" v-model="accountShow" :title="t('userAccount')" @closed="resetAccountList" >
+      <div v-if="userStore.user.type === 0" class="subdomain-actions">
+        <el-button type="primary" @click="subdomainAddShow = true">{{ t('subdomainAdd') }}</el-button>
+      </div>
       <el-table :data="accountList" style="height: 480px" v-loading="accountLoading" element-loading-background="transparent" :empty-text="accountLoading ? '' : null">
         <el-table-column property="email" :label="t('emailAccount')" >
           <template #default="props">
@@ -208,7 +211,8 @@
         </el-table-column>
         <el-table-column property="address" :label="t('tabStatus')"  :width="locale === 'en' ? 75 : 65" >
           <template #default="props">
-            <el-tag type="primary" disable-transitions v-if="props.row.isDel === 0">{{$t('active')}}</el-tag>
+            <el-tag type="warning" disable-transitions v-if="props.row.isDel === 0 && props.row.mailboxKind === 1 && props.row.status !== 0">{{$t('disabled')}}</el-tag>
+            <el-tag type="primary" disable-transitions v-else-if="props.row.isDel === 0">{{$t('active')}}</el-tag>
             <el-tag type="info" disable-transitions v-if="props.row.isDel === 1">{{$t('deleted')}}</el-tag>
           </template>
         </el-table-column>
@@ -301,6 +305,9 @@
         </div>
       </div>
     </el-dialog>
+    <subdomain-mailbox-dialog v-model="subdomainAddShow" :user-id="accountParams.userId"
+                             :user-email="users.find(row => row.userId === accountParams.userId)?.email"
+                             @created="subdomainCreated" />
     <el-dropdown
         :show-timeout="0"
         :hide-timeout="0"
@@ -399,6 +406,7 @@ import {isEmail} from "@/utils/verify-utils.js";
 import {useRoleStore} from "@/store/role.js";
 import {useUserStore} from "@/store/user.js";
 import {useI18n} from 'vue-i18n';
+import SubdomainMailboxDialog from '@/components/subdomain-mailbox-dialog/index.vue'
 
 defineOptions({
   name: 'user'
@@ -484,6 +492,7 @@ const userForm = reactive({
 
 const showAdd = ref(false)
 const accountShow = ref(false)
+const subdomainAddShow = ref(false)
 const addLoading = ref(false);
 const setTypeShow = ref(false)
 const setPwdShow = ref(false)
@@ -595,6 +604,12 @@ function deleteAccount(account) {
 function accountCurChange(e) {
   accountParams.num = e
   getAccountList()
+}
+
+function subdomainCreated() {
+  accountParams.num = 1
+  getAccountList(true)
+  refresh()
 }
 
 function resetAccountList() {
@@ -1092,7 +1107,7 @@ function adjustWidth() {
   height: 100%;
 }
 
-:deep(.el-dialog) {
+:deep(.el-dialog:not(.subdomain-mailbox-dialog)) {
   width: 400px !important;
   @media (max-width: 440px) {
     width: calc(100% - 40px) !important;
@@ -1188,6 +1203,12 @@ function adjustWidth() {
 
 :deep(.oauth-platform-icon) {
   flex-shrink: 0;
+}
+
+.subdomain-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
 }
 
 .account-pagination {
