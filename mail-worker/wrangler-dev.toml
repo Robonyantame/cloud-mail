@@ -36,8 +36,7 @@ run_worker_first = true
 
 
 [vars]
-subdomain_base = "example.com"
-subdomain_domains = [] # Add a domain only in an isolated probe deployment before real receive verification.
+subdomain_domains = [] # Labels, e.g. ["shop", "tools"], apply to every domain below.
 ai_model = ""
 analysis_cache = false
 orm_log = true

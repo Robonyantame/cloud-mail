@@ -25,12 +25,15 @@ npm run subdomain:name -- example.com shop
 在实际部署使用的 Wrangler 配置 `[vars]` 中维护独立列表。使用 GitHub Actions 时应修改 `wrangler-action.toml`，手动发布通常使用 `wrangler.toml`；其他测试配置也需要分别维护，不能只改未被部署的文件：
 
 ```toml
-domain = ["example.com"] # 保留现有普通注册/创建域名
-subdomain_base = "example.com"
-subdomain_domains = ["shop.example.com", "a1b2c3d4e5.example.com"]
+domain = ["mxr.cc.cd", "roop.cc.cd", "tame.cc.cd"]
+subdomain_domains = ["shop", "tools"]
 ```
 
-基础域名固定，列表只允许其单层子域；全部使用小写，不写 `@`、协议、端口或末尾点。缺省空列表表示不启用新子域。示例地址必须替换成自己的已验证地址，不能直接当作可收信域名。
+`domain` 同时保留普通邮箱域名用途，并提供子域组合的基础域名；`subdomain_domains` 只填单层标签。上例启用 `shop.mxr.cc.cd`、`tools.mxr.cc.cd`、`shop.roop.cc.cd`、`tools.roop.cc.cd`、`shop.tame.cc.cd`、`tools.tame.cc.cd` 六个子域。全部使用小写，不写 `@`、协议、端口或末尾点。缺省空标签列表表示不启用新子域。
+
+不再需要 `subdomain_base`。若使用上一版完整域名配置，删除该变量，将 `subdomain_domains` 改为标签，并检查所有基础域名与标签组合。完整域名形式的旧列表会报配置错误，不会被静默忽略。这次配置调整不新增数据库迁移，已完成上一版迁移的数据库继续使用；从原版升级仍需下述迁移。
+
+例如先通过批量 API 指定 `domain: "shop.mxr.cc.cd", prefixes: ["test"]` 创建 `test@shop.mxr.cc.cd`，指定 `domain: "tools.tame.cc.cd", prefixes: ["temp"]` 创建 `temp@tools.tame.cc.cd`。API 的 `domain` 仍填写完整子域，不能只填 `shop`。必须为每个启用组合完成 Cloudflare 收信配置与验证；仅有这个变量不等于公网可收信。
 
 不要把子域放进 `domain`；接口也会过滤公开域名选项并阻止普通注册/创建。普通用户的角色授权按完整子域匹配，`example.com` 不代表 `shop.example.com`。沿用现有角色语义：`availDomain` 为空表示不限制域名，非空时必须包含完整子域；管理员自身免角色域名和数量限制，代普通用户创建不豁免。新 API 仍要求 `addEmail`、`manyEmail` 开启，遵守 `minEmailPrefix` 和 `emailPrefixFilter`，不要求浏览器人机验证。
 
@@ -46,24 +49,24 @@ subdomain_domains = ["shop.example.com", "a1b2c3d4e5.example.com"]
 2. 对已有数据库，先检查 `PRAGMA table_info(account)` 是否已有 `mailbox_kind`。在 `mail-worker` 运行 `npm run subdomain:migration` 生成 `.wrangler/subdomain-migration.sql`。若该列已存在，使用 `npm run subdomain:migration -- --existing-column`。命令只生成文件，不修改数据库。
 3. 在发布新 Worker 前，由管理员将生成的 SQL 应用到对应的已有数据库。先在本地或测试数据库演练，再使用实际数据库名称/配置执行 `wrangler d1 execute <数据库名称> --remote --config <部署配置> --file .wrangler/subdomain-migration.sql`。此 SQL 仅添加本功能结构；不要删表、删索引或用空库覆盖生产。若中断，重新检查列，按第 2 步选择参数重跑；表、索引及触发器使用 `IF NOT EXISTS`。
 4. 新数据库先保持子域列表为空，按原项目流程部署并访问 `/api/init/<jwt_secret>` 完整初始化；完整初始化已包含本功能迁移。已有数据库应用第 3 步迁移后，再按原项目流程部署新版 Worker。不能让新版正常流量先于迁移，否则缺少列/表会导致请求失败。
-5. 完成下一节的真实探针收信验证后，才把子域加入生产 `subdomain_domains` 并由管理员发布配置。每次新增子域后调用 `/api/init/<jwt_secret>/subdomain`，确认返回 `success`；它检查/补齐本功能结构、持久化整个子域的管理标记，并刷新设置，不重跑旧迁移。初始化密钥沿用项目已有机制，不要将它提交到脚本或公开日志。
+5. 完成下一节的真实探针收信验证后，才把标签加入生产 `subdomain_domains` 并由管理员发布配置。新增基础域名或标签会同时启用相应的所有组合，须逐个完成验证。每次更新列表后调用 `/api/init/<jwt_secret>/subdomain`，确认返回 `success`；它检查/补齐本功能结构、持久化全部展开子域的管理标记，并刷新设置，不重跑旧迁移。初始化密钥沿用项目已有机制，不要将它提交到脚本或公开日志。
 6. 生产先创建一个探针地址再进行一次外部收信回归，确认目标 `accountId` 与用户归属后，运行正式批量脚本。
 
 新增结构包括 `account.mailbox_kind`、`managed_subdomain`、`mailbox_reservation`、`mailbox_request`、`mailbox_request_item` 和对应索引/触发器。已有普通邮箱保持 `mailbox_kind=0`。占用表独立于邮箱和用户，物理删除不会级联清除占用；批次结果超过 24 小时由现有小时定时任务清理，地址占用不清理。
 
-子域移出列表后，新建和收信停止，历史记录仍可查询。不要删除 `managed_subdomain` 或 `mailbox_reservation` 作为停用手段。若需要回退版本，应使用保留严格校验的修复版本；旧 Worker 不认识管理标记，直接回滚到旧收信代码会重新启用宽松回退。退回旧代码前必须先在 Cloudflare 停止这些子域向它路由邮件。
+移除标签会停用其在所有基础域名下的组合，移除基础域名会停用其下所有组合；新建和收信停止，历史记录仍可查询。不要删除 `managed_subdomain` 或 `mailbox_reservation` 作为停用手段。若需要回退版本，应使用保留严格校验的修复版本；旧 Worker 不认识管理标记，直接回滚到旧收信代码会重新启用宽松回退。退回旧代码前必须先在 Cloudflare 停止这些子域向它路由邮件。
 
 ## 真实 Cloudflare 收信验收（尚未完成）
 
-分别选择一个随机命名子域和一个自定义命名子域执行完整流程：
+分别选择一个随机标签和一个自定义标签，对每个标签与各基础域名组合执行完整流程：
 
 1. 用辅助命令生成名称。在 Cloudflare 为该完整子域启用 Email Routing，并按平台提示配置 DNS；配置将该子域邮件交给探针 Worker 的路由。参考 [Cloudflare 子域配置](https://developers.cloudflare.com/email-service/configuration/subdomains/) 和 [路由配置](https://developers.cloudflare.com/email-service/get-started/route-emails/)。本项目不会调用 Cloudflare API 自动创建 DNS 或路由。
-2. 只在隔离探针部署把该子域加入列表，运行初始化/子域初始化。在探针环境通过批量 API **先创建** `probe@该子域`，记录 `accountId`。这一步是验证前的临时配置，不等于生产可用子域认证。
+2. 只在隔离探针部署的 `domain` 中配置待测基础域名，在 `subdomain_domains` 中加入标签，运行初始化/子域初始化。名称命令输出完整域名，配置时仅取第一段标签。在探针环境通过批量 API **先创建** `probe@该完整子域`，记录 `accountId`。这一步是验证前的临时配置，不等于生产可用子域认证。
 3. 从 Gmail、Outlook 或其他真正的外部邮箱发送一封带唯一主题和正文的邮件到该完整地址。记录发送时间、Message-ID、Cloudflare 邮件事件结果；通过 `emails?accountId=...` 和现有页面确认邮件内容、收件地址与归属一致。必要时再测试普通附件。
 4. 发送到未创建的 `unknown@该子域` 和 `probe+tag@该子域`：检查 Cloudflare 事件/发件方退信确认拒收，并确认数据库/页面未出现这些新邮件。全局 `noRecipient=0`（允许无主收件）时仍须拒收；如果确实创建 `probe+tag`，则该完整地址应能收到邮件。
 5. 停用 `probe`，重发外部邮件并从站内普通邮箱发送，均应拒收；旧邮件仍能查到。恢复后再次外部发信，应可收到。再撤销用户完整子域权限或禁用用户，确认拒收。
-6. 在探针部署移出该子域并发布配置：已创建和未创建地址均拒收，旧邮件仍可读；不能回退到无主邮件或 `+tag` 收信。再测试物理删除地址或其用户，尝试重新创建同一地址，应返回 `ADDRESS_UNAVAILABLE`。
-7. 保存两类子域的以上实际证据，才将它们加入生产列表。DNS 查询成功、API 创建成功、本地 `email` 事件测试通过都不能代替第 3 步。
+6. 在探针部署移除对应标签或基础域名并发布配置：被移除组合的已创建和未创建地址均拒收，旧邮件仍可读；不能回退到无主邮件或 `+tag` 收信。再测试物理删除地址或其用户，尝试重新创建同一地址，应返回 `ADDRESS_UNAVAILABLE`。
+7. 保存两类标签在全部基础域名下的实际证据，才将标签加入生产列表。DNS 查询成功、API 创建成功、本地 `email` 事件测试通过都不能代替第 3 步。
 
 尚未验证真实 Cloudflare 投递延迟、平台配额、长期存量/每日容量。没有新增每日限额。批量实现用有序计划行的数据库触发器执行逐项校验，整个创建过程只有固定数量的 D1 调用；数据库串行处理事务，配额检查和账户创建不会被并发批次分开。D1 事务和平台限制参见 [batch 事务说明](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch) 与 [D1 限制](https://developers.cloudflare.com/d1/platform/limits/)。生产仍应观察 D1 处理时长、队列、存储及 Worker CPU；本地测试不构成容量保证。
 
@@ -77,7 +80,7 @@ PowerShell 示例（`MAIL_API_URL`、`MAIL_API_TOKEN` 由本机环境设置）�
 $mailHeaders = @{ Authorization = $env:MAIL_API_TOKEN }
 $mailBody = @{
   requestId = "websites-20260914-001"
-  domain = "shop.example.com"
+  domain = "shop.mxr.cc.cd"
   prefixes = @("github", "shopping", "alice+tag")
   # userId = 42 # 只能填写真实已有用户；省略时归管理员本人
 } | ConvertTo-Json

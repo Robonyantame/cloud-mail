@@ -36,9 +36,9 @@ crons = ["0 * * * *"]	#每小时执行；resetDaySendCount 仅在 UTC 0 点生�
 
 
 [vars]
-# Separate, verified receive-only subdomains; never add them to domain.
-# subdomain_base = "example.com"
-# subdomain_domains = ["shop.example.com"]
+# Labels apply to every domain entry: shop.example.com, tools.example.com, etc.
+# Verify Email Routing for every combination before enabling these labels.
+# subdomain_domains = ["shop", "tools"]
 #ai_model = ""			#ai模型,不填默认使用@cf/meta/llama-3.1-8b-instruct-fast
 #analysis_cache = false			#是否开启分析数据缓存
 #orm_log = false			#是否sql日志

@@ -38,8 +38,8 @@ async function api(path, body, token = 'test-token', method = body ? 'POST' : 'G
 }
 
 beforeEach(async () => {
-	c = { env: { ...env, admin: 'admin@example.com', domain: ['example.com'], subdomain_base: 'example.com',
-		subdomain_domains: [domain], jwt_secret: 'local-test-only', orm_log: false },
+	c = { env: { ...env, admin: 'admin@example.com', domain: ['example.com'],
+		subdomain_domains: ['shop'], jwt_secret: 'local-test-only', orm_log: false },
 		req: { param: () => 'local-test-only' }, set() {}, text: value => value };
 	await dbInit.init(c);
 	await run("INSERT INTO user(user_id,email,password,salt,type) VALUES (1,'admin@example.com','','',1),(2,'member@example.com','','',1)");
@@ -324,6 +324,59 @@ describe('strict delivery, lifecycle and existing UI', () => {
 });
 
 describe('API and provisioning', () => {
+	it('expands every label across all mailbox domains and receives at the requested full addresses', async () => {
+		c.env.domain = ['mxr.cc.cd', 'roop.cc.cd', 'tame.cc.cd'];
+		c.env.subdomain_domains = ['shop', 'tools'];
+		const expected = ['shop.mxr.cc.cd', 'tools.mxr.cc.cd', 'shop.roop.cc.cd', 'tools.roop.cc.cd', 'shop.tame.cc.cd', 'tools.tame.cc.cd'];
+		expect(subdomainConfig(c.env).domains).toEqual(expected);
+		for (const fullDomain of expected) {
+			const prefix = fullDomain === 'tools.tame.cc.cd' ? 'temp' : 'test';
+			const response = await api('batchCreate', { ...custom([prefix]), domain: fullDomain });
+			const result = await response.json();
+			expect(result.data.created).toBe(1);
+			const item = result.data.items[0];
+			expect(item.email).toBe(`${prefix}@${fullDomain}`);
+			expect(await deliver(item.email)).not.toHaveBeenCalled();
+			expect((await service.emails(c, item)).items).toHaveLength(1);
+		}
+		expect((await settingService.query(c)).domainList).toEqual(c.env.domain.map(d => `@${d}`));
+		await expect(service.batchCreate(c, request({ domain: 'shop' }))).rejects.toThrow('DOMAIN_UNAVAILABLE');
+		await expect(service.batchCreate(c, request({ domain: 'other.mxr.cc.cd' }))).rejects.toThrow('DOMAIN_UNAVAILABLE');
+		await run("UPDATE role SET avail_domain = 'mxr.cc.cd' WHERE role_id = 1");
+		await expect(service.batchCreate(c, request({ domain: expected[0], userId: 2 }))).rejects.toThrow('DOMAIN_PERMISSION_DENIED');
+	});
+	it('keeps removed base/label combinations strict and preserves their owners and history', async () => {
+		c.env.domain = ['mxr.cc.cd', 'tame.cc.cd'];
+		c.env.subdomain_domains = ['shop', 'tools'];
+		const { items: [removedBase] } = await service.batchCreate(c, { ...custom(['test']), domain: 'shop.mxr.cc.cd' });
+		const { items: [removedLabel] } = await service.batchCreate(c, { ...custom(['temp']), domain: 'tools.tame.cc.cd' });
+		await deliver(removedBase.email);
+		await deliver(removedLabel.email);
+		c.env.domain = ['tame.cc.cd'];
+		c.env.subdomain_domains = ['shop'];
+		for (const item of [removedBase, removedLabel]) {
+			expect(await deliver(item.email)).toHaveBeenCalledWith('DOMAIN_UNAVAILABLE');
+			expect((await service.emails(c, item)).items).toHaveLength(1);
+			await expect(service.batchCreate(c, request({ domain: item.email.split('@')[1] }))).rejects.toThrow('DOMAIN_UNAVAILABLE');
+		}
+		expect(await deliver('unknown@tools.mxr.cc.cd')).toHaveBeenCalledWith('DOMAIN_UNAVAILABLE');
+		expect((await service.batchCreate(c, request({ domain: 'shop.tame.cc.cd' }))).created).toBe(1);
+		c.env.domain.push('mxr.cc.cd');
+		c.env.subdomain_domains.push('tools');
+		expect(await deliver(removedBase.email)).not.toHaveBeenCalled();
+		expect((await service.batchCreate(c, { ...custom(['test']), domain: 'shop.mxr.cc.cd' })).items[0].error).toBe('ADDRESS_UNAVAILABLE');
+	});
+	it('accepts JSON array variables, deduplicates combinations and rejects full domains in the label list', () => {
+		expect(subdomainConfig({ domain: '["mxr.cc.cd","mxr.cc.cd"]', subdomain_domains: '["shop","shop","tools"]' }).domains)
+			.toEqual(['shop.mxr.cc.cd', 'tools.mxr.cc.cd']);
+		expect(subdomainConfig({ domain: ['mxr.cc.cd'] }).domains).toEqual([]);
+		for (const labels of [['shop.mxr.cc.cd'], ['nested.shop'], ['UPPER'], ['-bad'], [''], [null], [123], false, '{}', '{bad']) {
+			expect(() => subdomainConfig({ domain: ['mxr.cc.cd'], subdomain_domains: labels })).toThrow('INVALID_SUBDOMAIN_CONFIG');
+		}
+		for (const bases of [[], ['invalid'], ['UPPER.com'], [null], '{bad']) {
+			expect(() => subdomainConfig({ domain: bases, subdomain_domains: ['shop'] })).toThrow('INVALID_SUBDOMAIN_CONFIG');
+		}
+	});
 	it('requires the administrator public token and rejects malformed requests without writes', async () => {
 		expect((await api('batchCreate', request(), null)).status).toBe(401);
 		expect((await (await api('batchCreate', request(), null)).json()).code).toBe(401);
@@ -355,7 +408,7 @@ describe('API and provisioning', () => {
 		expect((await api('disable', [], 'test-token')).status).toBe(400);
 	});
 	it('initializes newly configured domains persistently and protects the migration endpoint', async () => {
-		c.env.subdomain_domains.push('new.example.com');
+		c.env.subdomain_domains.push('new');
 		const wrong = await worker.fetch(new Request('https://mail.example.com/api/init/wrong/subdomain'), c.env, {});
 		expect(wrong.status).toBe(403);
 		expect(await first("SELECT domain FROM managed_subdomain WHERE domain = 'new.example.com'")).toBeNull();
@@ -368,7 +421,7 @@ describe('API and provisioning', () => {
 		expect(subdomainName('example.com')).toMatch(/^[a-z0-9]{10}\.example\.com$/);
 		expect(subdomainName('example.com', 'shop')).toBe(domain);
 		for (const label of ['-bad', 'bad-', 'a.b', 'UPPER', 'a'.repeat(64)]) expect(() => subdomainName('example.com', label)).toThrow();
-		expect(() => subdomainConfig({ subdomain_base: 'example.com', subdomain_domains: ['nested.shop.example.com'] })).toThrow();
+		expect(() => subdomainConfig({ domain: ['example.com'], subdomain_domains: ['nested.shop'] })).toThrow();
 		await service.batchCreate(c, request());
 		await migrateSubdomain(c.env.db);
 		expect(await first('SELECT count(*) n FROM mailbox_reservation')).toEqual({ n: 1 });

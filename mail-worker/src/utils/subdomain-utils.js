@@ -24,15 +24,21 @@ export function subdomainName(base, label = randomLabel()) {
 }
 
 export function subdomainConfig(env) {
-	const base = env.subdomain_base || '';
-	let domains = env.subdomain_domains || [];
-	if (typeof domains === 'string') domains = JSON.parse(domains);
-	if (!Array.isArray(domains) || (base && !validBaseDomain(base))) throw new Error('INVALID_SUBDOMAIN_CONFIG');
-	for (const domain of domains) {
-		if (typeof domain !== 'string' || !base || !domain.endsWith(`.${base}`)
-			|| subdomainName(base, domain.slice(0, -(base.length + 1))) !== domain) {
-			throw new Error('INVALID_SUBDOMAIN_CONFIG');
+	let labels = env.subdomain_domains ?? [];
+	let bases = env.domain ?? [];
+	try {
+		if (typeof labels === 'string') labels = JSON.parse(labels);
+		if (!Array.isArray(labels) || labels.some(label => typeof label !== 'string' || !labelPattern.test(label))) {
+			throw new Error();
 		}
+		// Disabled feature must not impose extra validation on legacy domain settings.
+		if (!labels.length) return { domains: [] };
+		if (typeof bases === 'string') bases = JSON.parse(bases);
+		if (!Array.isArray(bases) || !bases.length || bases.some(base => !validBaseDomain(base))) throw new Error();
+	} catch {
+		throw new Error('INVALID_SUBDOMAIN_CONFIG');
 	}
-	return { base, domains: [...new Set(domains)] };
+	// Each configured label applies to every existing mailbox base domain.
+	const domains = [...new Set(bases)].flatMap(base => [...new Set(labels)].map(label => subdomainName(base, label)));
+	return { domains };
 }

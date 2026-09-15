@@ -5,7 +5,10 @@
 ## Language
 
 **基础域名**：
-随机子域名邮箱所依附的固定域名，例如 `alice@x7k.example.com` 中的 `example.com`。
+子域名邮箱所依附的已有邮箱域名，例如 `alice@x7k.example.com` 中的 `example.com`；同一子域标签可以用于多个基础域名。
+
+**子域标签**：
+添加在基础域名前的一段名称，例如 `shop.example.com` 中的 `shop`；可以由管理员指定或随机生成。
 
 **随机子域标签**：
 在基础域名前随机生成的一段名称，例如 `alice@x7k.example.com` 中的 `x7k`。
